@@ -12091,7 +12091,13 @@ class JarBucketManager:
     Manager for downloading Minecraft server JAR files from various sources.
     Inspired by Crafty Controller's Big Bucket system.
     """
-    
+
+    # A filename the bucket can legitimately hold: the .jar/.zip artifact names
+    # download_jar() writes and list_downloaded_jars() surfaces. Deliberately
+    # excludes path separators and a leading dot, so it doubles as the traversal
+    # guard for delete_jar().
+    JAR_FILENAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+-]*\.(jar|zip)$')
+
     # Server type metadata with descriptions
     SERVER_TYPES = {
         'vanilla': {
@@ -13134,17 +13140,29 @@ class JarBucketManager:
         return 'unknown'
     
     def delete_jar(self, server_type, filename):
-        """Delete a downloaded JAR file"""
-        filepath = SERVER_EXECUTABLES_DIR / server_type / filename
-        
-        if not filepath.exists():
-            return {'success': False, 'error': 'File not found'}
-        
-        try:
-            filepath.relative_to(SERVER_EXECUTABLES_DIR)
-        except ValueError:
+        """Delete a downloaded JAR file.
+
+        Both arguments come straight from the client, so they are validated as
+        simple names before being joined. This used to guard with
+        filepath.relative_to(SERVER_EXECUTABLES_DIR), which treats '..' as a
+        literal segment rather than resolving it — so type=".." filename="msc.db"
+        passed the check and unlink() removed the panel database (issue #83).
+        is_safe_path() resolves both sides first, which also rejects a symlink
+        inside the bucket that points out of it.
+        """
+        if not re.match(r'^[a-z0-9-]+$', server_type or ''):
+            return {'success': False, 'error': 'Invalid server type'}
+        if not self.JAR_FILENAME_RE.match(filename or ''):
+            return {'success': False, 'error': 'Invalid filename'}
+
+        if not is_safe_path(SERVER_EXECUTABLES_DIR, f'{server_type}/{filename}'):
             return {'success': False, 'error': 'Invalid path'}
-        
+
+        filepath = SERVER_EXECUTABLES_DIR / server_type / filename
+
+        if not filepath.is_file():
+            return {'success': False, 'error': 'File not found'}
+
         try:
             filepath.unlink()
             return {'success': True, 'message': f'Deleted {filename}'}
@@ -13357,6 +13375,14 @@ def api_jar_bucket_delete():
 
     if not server_type or not filename:
         return api_error('Missing type or filename', 400)
+
+    # Same guard the /download and /queue-download routes apply. delete_jar()
+    # re-validates both names at the sink; this just fails early and keeps the
+    # error shape consistent across the jar-bucket routes.
+    if not re.match(r'^[a-z0-9-]+$', server_type):
+        return api_error('Invalid server type', 400)
+    if not JarBucketManager.JAR_FILENAME_RE.match(filename):
+        return api_error('Invalid filename', 400)
 
     result = jar_bucket.delete_jar(server_type, filename)
     if result.get('success'):
