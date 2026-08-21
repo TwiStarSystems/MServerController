@@ -6985,6 +6985,8 @@ def _execute_approved_action(action):
                 ok, msg = server_manager.start_server(sid)
             elif act == 'stop':
                 ok, msg = server_manager.stop_server(sid)
+            elif act == 'restart':
+                ok, msg = server_manager.restart_server(sid)
             elif act == 'kill':
                 ok, msg = server_manager.kill_server(sid)
             else:
