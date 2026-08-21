@@ -35,6 +35,7 @@ from enum import Enum
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8414,9 +8415,22 @@ def delete_nbt_tag(server_id):
 # ==================== Player Management Endpoints ====================
 
 def get_player_uuid(player_name):
-    """Lookup player UUID from Mojang API"""
+    """Look up a JAVA player's UUID from the Mojang API. Java only (issue #49).
+
+    Mojang has no record of Bedrock players — they are identified by XUID, and
+    Bedrock exposes no gamertag lookup at all — so this returns (None, None) for
+    every Bedrock gamertag. Never call it on a Bedrock path: resolve those with
+    _bedrock_resolve_xuid(), which reads the console-learned XUID cache and
+    allowlist.json, or takes an XUID directly. The three player routes that use
+    this (ops / whitelist / ban) each return from their _is_bedrock_server()
+    branch before reaching it; keep it that way when adding another.
+
+    Returns (uuid_with_dashes, canonical_name) or (None, None).
+    """
     try:
-        response = requests.get(f'https://api.mojang.com/users/profiles/minecraft/{player_name}', timeout=5)
+        response = requests.get(
+            f'https://api.mojang.com/users/profiles/minecraft/{quote(player_name, safe="")}',
+            timeout=5)
         if response.status_code == 200:
             data = response.json()
             # Format UUID with dashes
@@ -8425,7 +8439,7 @@ def get_player_uuid(player_name):
                 uuid_formatted = f"{uuid_raw[:8]}-{uuid_raw[8:12]}-{uuid_raw[12:16]}-{uuid_raw[16:20]}-{uuid_raw[20:]}"
                 return uuid_formatted, data.get('name', player_name)
         return None, None
-    except:
+    except Exception:
         return None, None
 
 
