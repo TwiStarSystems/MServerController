@@ -4843,7 +4843,46 @@ class ServerManager:
             if port:
                 ports[server_id] = port
         return ports
-    
+
+    # Every server.properties key that makes a server bind a port. Java only has
+    # 'server-port'; Bedrock also binds 'server-portv6', and both are UDP, so a
+    # Bedrock server can collide with another server's IPv6 port just as easily
+    # as its IPv4 one (issue #44).
+    BOUND_PORT_KEYS = ('server-port', 'server-portv6')
+
+    def get_server_ports(self, server_id):
+        """Every port this server claims in server.properties, as {key: port}."""
+        ports = {}
+        try:
+            properties_path = self.get_server_path(server_id) / 'server.properties'
+            if properties_path.exists():
+                with open(properties_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            key, value = key.strip(), value.strip()
+                            if key in self.BOUND_PORT_KEYS and value:
+                                ports[key] = value
+        except Exception:
+            pass
+        return ports
+
+    def get_all_used_ports(self, exclude_server_id=None):
+        """Map every port claimed by any server to the server holding it.
+
+        Unlike get_all_server_ports() (keyed by server, IPv4 only), this is keyed
+        by port and covers both bound-port keys, so it answers "is this port
+        free?" directly.
+        """
+        used = {}
+        for server_id in self.get_all_server_ids():
+            if exclude_server_id and server_id == exclude_server_id:
+                continue
+            for port in self.get_server_ports(server_id).values():
+                used.setdefault(port, server_id)
+        return used
+
     def _ensure_canned_commands_conf(self, server_dir):
         """Create canned_commands.conf in server_dir if it does not already exist."""
         conf_path = Path(server_dir) / 'canned_commands.conf'
@@ -7212,6 +7251,21 @@ def _bedrock_level_name(raw, default='Bedrock level'):
     return name[:64]
 
 
+def _find_port_conflict(requested_ports, exclude_server_id=None):
+    """First requested port already claimed by another server, as (port, name).
+
+    Returns None when every requested port is free. Callers hold
+    server_manager.port_lock across this and the write that claims the port.
+    """
+    used = server_manager.get_all_used_ports(exclude_server_id=exclude_server_id)
+    for port in requested_ports:
+        other_id = used.get(str(port))
+        if other_id:
+            cfg = server_manager.get_server_config(other_id) or {}
+            return str(port), cfg.get('name', 'Unknown Server')
+    return None
+
+
 @app.route('/api/servers', methods=['POST'])
 @permission_required('servers.create')
 def create_server():
@@ -7341,7 +7395,52 @@ def setup_bedrock_server(server_id):
     data = request.get_json(silent=True) or {}
     server_properties = data.get('serverProperties', {})
     server_name = data.get('serverName', server_config.get('name', 'Bedrock Server'))
-    
+
+    # --- Port assignment + collision check (issue #44) ---
+    # create_server() only runs its duplicate-port check when the request carries
+    # a 'server-port', and the wizard posts serverProperties:{} for Bedrock — the
+    # port arrives here instead, so this is the only place it can be checked.
+    #
+    # Bedrock binds UDP on an IPv4 *and* an IPv6 port. The wizard only asks for
+    # the IPv4 one, so derive the IPv6 port from it the way Bedrock's own
+    # 19132/19133 defaults do rather than hardcoding 19133 — otherwise every
+    # server created through the wizard claims 19133 and the second one can
+    # never bind IPv6.
+    #
+    # Checking here, before the thread starts, means a clash is a plain 400
+    # rather than a failure buried in the progress feed after a ~100MB download.
+    def _port_or_none(value):
+        try:
+            port = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return port if 1 <= port <= 65535 else None
+
+    port_v4 = _port_or_none(server_properties.get('server-port', 19132))
+    if port_v4 is None:
+        return api_error('server-port must be a number between 1 and 65535', 400)
+
+    requested_v6 = server_properties.get('server-portv6')
+    v6_derived = requested_v6 is None
+    port_v6 = _port_or_none(port_v4 + 1) if v6_derived else _port_or_none(requested_v6)
+    if port_v6 is None:
+        # Say which port the caller actually has control over.
+        return api_error(
+            f'No IPv6 port is available for IPv4 port {port_v4} — pick a lower server-port'
+            if v6_derived else 'server-portv6 must be a number between 1 and 65535', 400)
+    if port_v6 == port_v4:
+        return api_error(f'The IPv4 and IPv6 ports must differ (both are {port_v4})', 400)
+
+    with server_manager.port_lock:
+        conflict = _find_port_conflict((port_v4, port_v6), exclude_server_id=server_id)
+    if conflict:
+        port, owner = conflict
+        if str(port) == str(port_v6):
+            detail = ' (the IPv6 port, derived as IPv4 + 1)' if v6_derived else ' (the IPv6 port)'
+        else:
+            detail = ''
+        return api_error(f'Port {port}{detail} is already in use by server: {owner}', 400)
+
     # Initialize progress
     jar_bucket.set_progress(progress_id, {
         'status': 'initializing',
@@ -7460,8 +7559,8 @@ def setup_bedrock_server(server_id):
             properties_path = server_dir / 'server.properties'
             bedrock_props = {
                 'server-name': server_name,
-                'server-port': server_properties.get('server-port', 19132),
-                'server-portv6': server_properties.get('server-portv6', 19133),
+                'server-port': port_v4,
+                'server-portv6': port_v6,
                 'max-players': server_properties.get('max-players', 10),
                 'gamemode': server_properties.get('gamemode', 'survival'),
                 'force-gamemode': 'true' if server_properties.get('force-gamemode') else 'false',
@@ -7488,7 +7587,20 @@ def setup_bedrock_server(server_id):
             for key, value in bedrock_props.items():
                 # Strip control chars so a value can't inject extra properties lines
                 lines.append(f'{key}=' + re.sub(r'[\x00-\x1f\x7f]', '', str(value)))
-            properties_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+            # Re-check under the lock and write while still holding it. The
+            # request-time check above happened before a multi-minute download,
+            # so a second Bedrock setup could have claimed these ports since;
+            # whoever writes server.properties first wins, and the loser fails
+            # here instead of silently sharing the port (issue #44).
+            with server_manager.port_lock:
+                conflict = _find_port_conflict((port_v4, port_v6), exclude_server_id=server_id)
+                if conflict:
+                    port, owner = conflict
+                    raise Exception(
+                        f'Port {port} was taken by server "{owner}" while this server '
+                        f'was downloading. Delete this server and create it again on a free port.')
+                properties_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
             
             # Update server config with the correct executable
             server_manager.update_server(server_id, executable='server.sh', version='latest')

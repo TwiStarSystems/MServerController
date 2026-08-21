@@ -2766,7 +2766,11 @@ async function createFreshServer(e) {
             serverEngine: 'bedrock',
             serverType: 'bedrock',
             version: 'latest',
-            serverProperties: {}
+            // Bedrock's server.properties is written later by setup-bedrock, but
+            // send the port now so create_server's duplicate-port check runs and
+            // a clash is caught before anything is created (issue #44). The rest
+            // of the properties still go to setup-bedrock.
+            serverProperties: { 'server-port': serverProperties['server-port'] }
           })
         });
 
