@@ -33,6 +33,10 @@ function escapeHtml(text) {
  * Escape a value being embedded in a single-quoted JS string inside a
  * double-quoted inline handler: onclick="doThing('${escapeAttr(name)}')".
  *
+ * This is ONLY for that case. For an ordinary attribute value — value="",
+ * placeholder="", title="", data-*="" — use escapeAttrValue() below; this one
+ * would leave JS backslash escapes sitting in the rendered attribute.
+ *
  * escapeHtml() is not enough here. It goes through textContent, which escapes
  * & < > but leaves quotes and backslashes alone — fine for a text node, not for
  * this, where a bare ' would close the JS string. Nor is HTML-escaping the quote
@@ -51,6 +55,20 @@ function escapeAttr(text) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Escape a value being embedded in an ordinary double-quoted attribute:
+ * value="${escapeAttrValue(url)}".
+ *
+ * escapeHtml() alone is not enough: it serializes a text node, which escapes
+ * & < > but leaves " untouched, so a value containing a double quote would
+ * close the attribute early. Quoting it is all that is needed here — unlike
+ * escapeAttr(), nothing downstream parses this value as JS, so it must NOT be
+ * backslash-escaped or the escapes show up in the rendered field.
+ */
+function escapeAttrValue(text) {
+  return escapeHtml(text === null || text === undefined ? '' : text).replace(/"/g, '&quot;');
 }
 
 /**

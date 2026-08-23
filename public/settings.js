@@ -1845,11 +1845,6 @@ async function deleteJarBucket(serverType, filename) {
 
 // ==================== JAR Download Sources (admin) ====================
 
-// Escape a string for use inside an HTML attribute value (escapeHtml leaves quotes alone)
-function escapeAttr(text) {
-  return escapeHtml(text ?? '').replace(/"/g, '&quot;');
-}
-
 function initJarLinksPanel() {
   const panel = document.getElementById('jar-links-panel');
   if (!panel) return;
@@ -1884,8 +1879,8 @@ function renderJarLinks(types) {
       return `
         <div class="form-group">
           <label>${escapeHtml(info.label)}${placeholders}</label>
-          <input type="text" class="form-control jar-link-input" data-type="${escapeAttr(typeId)}" data-field="${escapeAttr(field)}"
-                 value="${escapeAttr(info.override || '')}" placeholder="${escapeAttr(info.default)}">
+          <input type="text" class="form-control jar-link-input" data-type="${escapeAttrValue(typeId)}" data-field="${escapeAttrValue(field)}"
+                 value="${escapeAttrValue(info.override || '')}" placeholder="${escapeAttrValue(info.default)}">
         </div>
       `;
     }).join('');
@@ -1904,7 +1899,7 @@ function renderJarLinks(types) {
           </div>
         </div>
         <div class="jar-links-fields">${fields}</div>
-        <div class="jar-links-test-result" id="jar-links-test-${escapeAttr(typeId)}"></div>
+        <div class="jar-links-test-result" id="jar-links-test-${escapeAttrValue(typeId)}"></div>
       </div>
     `;
   }).join('') || '<div class="no-data">No configurable server types</div>';
