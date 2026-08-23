@@ -97,9 +97,25 @@ check_distro() {
     fi
 }
 
-# Generate secure random key using Python
+# Read the app version out of the version file. The file holds `version=X.Y.Z`
+# (server.py's read_version_file also accepts a bare X.Y.Z), so strip the prefix.
+read_installed_version() {
+    local f="$INSTALL_DIR/version"
+    [ -f "$f" ] || return 1
+    sed -n 's/^[[:space:]]*\(version[[:space:]]*=[[:space:]]*\)\{0,1\}\([0-9][0-9.]*\)[[:space:]]*$/\2/p' "$f" | head -n1
+}
+
+# Generate a secure random 64-hex-char key
 generate_secret_key() {
-    python3 -c "import secrets; print(secrets.token_hex(32))"
+    # openssl and /dev/urandom are both available on a base Debian/Ubuntu system;
+    # python3 may not be installed yet when this runs, so it is only the last resort.
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+    elif [ -r /dev/urandom ]; then
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+    else
+        python3 -c "import secrets; print(secrets.token_hex(32))"
+    fi
 }
 
 # Read PORT out of the (authoritative) .env file into $SERVER_PORT, so the
@@ -271,8 +287,10 @@ install_dependencies() {
     apt-get upgrade -y
 
     print_info "Installing required packages..."
-    # Core runtime tools
-    apt-get install -y curl wget git unzip
+    # Core runtime tools. sudo is required by install_hostctl_helper (visudo) and
+    # at runtime by the panel's `sudo mserver-hostctl` call — a minimal Debian
+    # install does not ship it.
+    apt-get install -y curl wget git unzip sudo
 
     # Python runtime + build tools needed to compile C extensions
     # (cryptography, Pillow/qrcode, eventlet all require headers at build time)
@@ -373,6 +391,7 @@ create_directories() {
     mkdir -p "$INSTALL_DIR/servers"
     mkdir -p "$INSTALL_DIR/backups"
     mkdir -p "$INSTALL_DIR/uploads"
+    mkdir -p "$INSTALL_DIR/uploads/jobs"
     mkdir -p "$INSTALL_DIR/tools"
     mkdir -p "$INSTALL_DIR/configs"
     mkdir -p "$INSTALL_DIR/public/resourcepacks"
@@ -499,15 +518,15 @@ do_install() {
     print_header "Fresh Installation"
     
     check_distro
-    
-    # Prompt for environment configuration first
-    prompt_env_config
 
-    install_dependencies
-    
-    # Handle existing installation
+    # Ask the destructive question FIRST, before spending time on apt or
+    # generating anything — answering "no" here aborts, so nothing should have
+    # been installed or upgraded by that point.
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Directory $INSTALL_DIR already exists."
+        print_warning "A fresh install DELETES it entirely — including msc.db (all users,"
+        print_warning "servers, schedules, API keys), servers/ (every world) and backups/."
+        print_warning "To keep that data, cancel and run: sudo $0 update"
         read -p "Remove and reinstall? This will DELETE all data! (y/n) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -520,6 +539,12 @@ do_install() {
             exit 1
         fi
     fi
+
+    install_dependencies
+
+    # Generate the secret / pin prod-safe env values. Runs after
+    # install_dependencies so the tools it needs are guaranteed present.
+    prompt_env_config
     
     # Determine source directory (where install.sh is located)
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -608,6 +633,21 @@ do_update() {
         echo "Please run a fresh installation first."
         exit 1
     fi
+
+    # Determine source directory (where install.sh is located)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+    # Refuse early if the source and the install dir are the same directory: the
+    # copy step below would `cp` each file onto itself, which fails — and by then
+    # the service is stopped and the DB is stashed in /tmp. A plain-files install
+    # has no git remote to pull from either, so there is nothing to update from.
+    if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR/.git" ]; then
+        print_error "Cannot update: this script is running from $INSTALL_DIR itself,"
+        print_error "and that directory is not a git checkout — there is no source to update from."
+        print_error "Run install.sh from a source checkout instead, e.g.:"
+        print_error "  cd /root/MServer && sudo ./install.sh update"
+        exit 1
+    fi
     
     # Display what will be preserved
     print_info "Files and data to be PRESERVED during update:"
@@ -649,12 +689,11 @@ do_update() {
         fi
     done
     
-    # Determine source directory (where install.sh is located)
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     print_info "Source directory: $SCRIPT_DIR"
-    
-    # Update application files
-    if [ -f "$SCRIPT_DIR/server.py" ]; then
+
+    # Update application files. Same-dir (git checkout at $INSTALL_DIR) falls
+    # through to the git-pull branch — there is nothing to copy in that case.
+    if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ] && [ -f "$SCRIPT_DIR/server.py" ]; then
         print_info "Updating application files from source directory..."
         
         # Copy core application files
@@ -874,6 +913,7 @@ do_uninstall() {
     echo "This will remove:"
     echo "  - The application at $INSTALL_DIR"
     echo "  - The systemd service"
+    echo "  - The host-control helper ($HOSTCTL_DEST) and its sudoers rule"
     echo ""
     print_warning "All server data, backups, and configurations will be DELETED!"
     echo ""
@@ -906,6 +946,18 @@ do_uninstall() {
     
     print_info "Removing application files..."
     rm -rf "$INSTALL_DIR"
+
+    # Drop the privileged helper and the sudoers rule that grants www-data access
+    # to it — leaving these behind would keep a root-capable grant for an app that
+    # is no longer installed.
+    if [ -f "$SUDOERS_FILE" ]; then
+        print_info "Removing sudoers rule ($SUDOERS_FILE)..."
+        rm -f "$SUDOERS_FILE"
+    fi
+    if [ -f "$HOSTCTL_DEST" ]; then
+        print_info "Removing host-control helper ($HOSTCTL_DEST)..."
+        rm -f "$HOSTCTL_DEST"
+    fi
     
     echo ""
     print_success "MServer has been uninstalled"
@@ -922,7 +974,7 @@ do_status() {
         
         # Show version if available
         if [ -f "$INSTALL_DIR/version" ]; then
-            echo "  Version: $(cat \"$INSTALL_DIR/version\")"
+            echo "  Version: $(read_installed_version)"
         fi
         
         echo "  Mode: HTTP (TLS handled by your external reverse proxy)"
@@ -1019,7 +1071,7 @@ show_menu() {
     if [ -d "$INSTALL_DIR" ]; then
         print_info "Existing installation detected at $INSTALL_DIR"
         if [ -f "$INSTALL_DIR/version" ]; then
-            echo "  Version: $(cat "$INSTALL_DIR/version")"
+            echo "  Version: $(read_installed_version)"
         fi
         echo ""
     fi

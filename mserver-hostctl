@@ -151,7 +151,9 @@ install_java() {
 ensure_deps() {
     require_root
     info "Installing/verifying required packages..."
-    apt-get install -y curl wget git unzip
+    # sudo is how the panel reaches this helper in the first place; keep it
+    # installed so a pruned host cannot strip the panel's only privileged path.
+    apt-get install -y curl wget git unzip sudo
     apt-get install -y \
         python3 python3-pip python3-venv python3-dev \
         build-essential libffi-dev \
