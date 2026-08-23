@@ -35,7 +35,7 @@ from enum import Enum
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -7397,6 +7397,32 @@ def setup_bedrock_server(server_id):
     server_properties = data.get('serverProperties', {})
     server_name = data.get('serverName', server_config.get('name', 'Bedrock Server'))
 
+    # --- Where the Bedrock archive comes from (issue #43) ---
+    # 'auto' (the default) installs from a cached archive in the JAR bucket and
+    # only downloads when the bucket holds none — that is what makes creation
+    # work on an offline host, or when the Minecraft CDN is unreachable.
+    # 'local' pins a known-good cached build, 'download' forces a fresh one.
+    # Resolving it here means a bad pin is a plain 400 instead of a failure
+    # buried in the progress feed.
+    source = str(data.get('source') or 'auto').strip().lower()
+    if source not in ('auto', 'local', 'download'):
+        return api_error('source must be one of: auto, local, download', 400)
+
+    local_file = str(data.get('localFile') or '').strip()
+    if local_file:
+        if source == 'download':
+            return api_error('localFile cannot be combined with source=download', 400)
+        if not JarBucketManager.JAR_FILENAME_RE.match(local_file):
+            return api_error('Invalid localFile name', 400)
+        source = 'local'
+
+    local_zip = None if source == 'download' else jar_bucket.find_local_bedrock_zip(local_file or None)
+    if source == 'local' and not local_zip:
+        return api_error(
+            f'No usable cached Bedrock server named "{local_file}" in the JAR bucket'
+            if local_file else
+            'No cached Bedrock server in the JAR bucket (serverexecutables/bedrock)', 400)
+
     # --- Port assignment + collision check (issue #44) ---
     # create_server() only runs its duplicate-port check when the request carries
     # a 'server-port', and the wizard posts serverProperties:{} for Bedrock — the
@@ -7453,62 +7479,120 @@ def setup_bedrock_server(server_id):
     })
 
     def do_bedrock_setup():
-        zip_path = server_dir / 'bedrock_server.zip'
+        # A cached archive belongs to the operator and is never deleted; only a
+        # throwaway copy downloaded into the server directory is cleaned up.
+        zip_path = local_zip
+        keep_zip = True
+        temp_path = None
         try:
-            # Step 2: Fetch download URL
-            jar_bucket.update_progress(
-                progress_id,
-                status='downloading',
-                message='Fetching Bedrock server download URL...',
-                progress=5,
-                step=2,
-            )
-
-            download_url, _ = jar_bucket._fetch_bedrock_download_url()
-            if not download_url:
+            if zip_path:
+                # Step 2: nothing to fetch — the bucket already holds a build
                 jar_bucket.update_progress(
                     progress_id,
-                    status='error',
-                    error='Could not get Bedrock server download URL',
+                    status='downloading',
+                    message=f'Using cached Bedrock server: {zip_path.name}',
+                    source='local',
+                    localFile=zip_path.name,
+                    progress=80,
+                    step=2,
                 )
-                return
+            else:
+                # Step 2: Fetch download URL
+                jar_bucket.update_progress(
+                    progress_id,
+                    status='downloading',
+                    message='Fetching Bedrock server download URL...',
+                    source='download',
+                    progress=5,
+                    step=2,
+                )
 
-            # Download the zip
-            jar_bucket.update_progress(
-                progress_id,
-                status='downloading',
-                message='Downloading latest Bedrock server...',
-                progress=10,
-                step=2,
-            )
-            
-            # (connect, read) timeout — read applies per chunk, so a stalled
-            # connection fails in seconds instead of holding the worker for
-            # the full download budget (issue #13).
-            response = requests.get(download_url, stream=True, timeout=(10, 30), headers={
-                'User-Agent': 'Mozilla/5.0 (Linux; x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
-            })
-            response.raise_for_status()
+                download_url, _ = jar_bucket._fetch_bedrock_download_url()
+                if not download_url:
+                    jar_bucket.update_progress(
+                        progress_id,
+                        status='error',
+                        error='Could not get Bedrock server download URL. Put a Bedrock '
+                              'server zip in serverexecutables/bedrock to install without '
+                              'reaching the Minecraft CDN.',
+                    )
+                    return
 
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
+                # Download the zip
+                jar_bucket.update_progress(
+                    progress_id,
+                    status='downloading',
+                    message='Downloading latest Bedrock server...',
+                    progress=10,
+                    step=2,
+                )
 
-            with open(zip_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size:
-                            pct = 10 + int((downloaded / total_size) * 70)  # 10-80%
-                            jar_bucket.update_progress(
-                                progress_id,
-                                status='downloading',
-                                message=f'Downloading... ({downloaded // 1024 // 1024} MB / {total_size // 1024 // 1024} MB)',
-                                progress=pct,
-                                total=total_size,
-                                downloaded=downloaded,
-                                step=2,
-                            )
+                # Download into the JAR bucket, not the server directory, so the
+                # next Bedrock server can be created from the local copy — one
+                # online install is all an offline host needs (issue #43). If the
+                # bucket isn't writable, fall back to the old throwaway copy.
+                bucket_dir = jar_bucket.bedrock_bucket_dir()
+                try:
+                    bucket_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass
+                if bucket_dir.is_dir() and os.access(bucket_dir, os.W_OK):
+                    target_dir = bucket_dir
+                else:
+                    target_dir = server_dir
+                    keep_zip = False
+
+                # The CDN names the file after the build (bedrock-server-<ver>.zip),
+                # which is what lets the bucket hold more than one pinned build.
+                cached_name = os.path.basename(urlparse(download_url).path)
+                if not JarBucketManager.JAR_FILENAME_RE.match(cached_name):
+                    cached_name = 'bedrock_server.zip'
+
+                # Write to a hidden temp name and rename once complete, so a
+                # concurrent setup never picks up a half-written archive.
+                temp_path = target_dir / f'.{uuid.uuid4().hex}.part'
+
+                # (connect, read) timeout — read applies per chunk, so a stalled
+                # connection fails in seconds instead of holding the worker for
+                # the full download budget (issue #13).
+                response = requests.get(download_url, stream=True, timeout=(10, 30), headers={
+                    'User-Agent': 'Mozilla/5.0 (Linux; x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+                })
+                response.raise_for_status()
+
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+
+                with open(temp_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size:
+                                pct = 10 + int((downloaded / total_size) * 70)  # 10-80%
+                                jar_bucket.update_progress(
+                                    progress_id,
+                                    status='downloading',
+                                    message=f'Downloading... ({downloaded // 1024 // 1024} MB / {total_size // 1024 // 1024} MB)',
+                                    progress=pct,
+                                    total=total_size,
+                                    downloaded=downloaded,
+                                    step=2,
+                                )
+
+                # Only a real Bedrock archive earns a place in the bucket: a
+                # truncated download or a CDN error page would otherwise sit
+                # there as litter for every later install to skip over.
+                if not jar_bucket.is_bedrock_zip(temp_path):
+                    temp_path.unlink()
+                    temp_path = None
+                    raise Exception(
+                        'Downloaded file is not a Bedrock server archive — no '
+                        f'{JarBucketManager.BEDROCK_ZIP_MEMBER} inside {cached_name}')
+
+                zip_path = target_dir / cached_name
+                os.replace(temp_path, zip_path)
+                temp_path = None
 
             # Step 3: Extract the zip
             jar_bucket.update_progress(
@@ -7545,8 +7629,10 @@ def setup_bedrock_server(server_id):
             if os.name != 'nt':
                 os.chmod(str(server_sh), 0o755)
             
-            # Delete the zip
-            zip_path.unlink()
+            # The bucket copy stays — it is what makes the next creation work
+            # offline. Only a throwaway download into the server directory goes.
+            if not keep_zip:
+                zip_path.unlink()
             
             # Step 4: Write server.properties with user-selected settings
             jar_bucket.update_progress(
@@ -7616,7 +7702,11 @@ def setup_bedrock_server(server_id):
             )
 
         except Exception as e:
-            if zip_path.exists():
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
+            # Never remove a cached bucket archive on failure — only the copy
+            # this run made for its own use.
+            if zip_path is not None and not keep_zip and zip_path.exists():
                 zip_path.unlink()
 
             jar_bucket.update_progress(
@@ -12227,6 +12317,10 @@ class JarBucketManager:
     # guard for delete_jar().
     JAR_FILENAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+-]*\.(jar|zip)$')
 
+    # The file every Bedrock server archive must contain — what tells a real
+    # Bedrock zip apart from any other zip an operator drops in the bucket.
+    BEDROCK_ZIP_MEMBER = 'bedrock_server.exe' if os.name == 'nt' else 'bedrock_server'
+
     # Server type metadata with descriptions
     SERVER_TYPES = {
         'vanilla': {
@@ -12785,6 +12879,61 @@ class JarBucketManager:
             print(f"[JarBucket] Error getting Fabric download URL: {e}")
         return None, None
     
+    def bedrock_bucket_dir(self):
+        """Directory holding cached Bedrock server archives."""
+        return SERVER_EXECUTABLES_DIR / 'bedrock'
+
+    def is_bedrock_zip(self, path):
+        """True if path is a zip carrying this platform's Bedrock server binary.
+
+        The archive is platform-specific, so a Windows build sitting in the
+        bucket must not be handed to a Linux host (and the reverse) — it would
+        extract fine and then fail to launch.
+        """
+        try:
+            with zipfile.ZipFile(path) as zf:
+                return self.BEDROCK_ZIP_MEMBER in zf.namelist()
+        except (zipfile.BadZipFile, OSError):
+            return False
+
+    def list_local_bedrock_zips(self):
+        """Cached Bedrock archives in the bucket, newest first (contents unchecked)."""
+        bucket_dir = self.bedrock_bucket_dir()
+        if not bucket_dir.is_dir():
+            return []
+        dated = []
+        for path in bucket_dir.iterdir():
+            # The bucket's own filename rule, so a build that turns up here can
+            # always be pinned by name through the API as well.
+            if not self.JAR_FILENAME_RE.match(path.name) or path.suffix.lower() != '.zip':
+                continue
+            try:
+                if not path.is_file():
+                    continue
+                # A file deleted from the bucket mid-scan drops out of the
+                # listing instead of raising — operators manage it from the UI.
+                dated.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+        return [path for _, path in sorted(dated, key=lambda item: item[0], reverse=True)]
+
+    def find_local_bedrock_zip(self, filename=None):
+        """Newest usable cached Bedrock archive, or the named one; None if absent.
+
+        This is the local-repo path Bedrock creation prefers over a live CDN
+        download, mirroring how Java servers install from serverexecutables/
+        (issue #43).
+        """
+        candidates = self.list_local_bedrock_zips()
+        if filename:
+            if not self.JAR_FILENAME_RE.match(filename):
+                return None
+            candidates = [p for p in candidates if p.name == filename]
+        for path in candidates:
+            if self.is_bedrock_zip(path):
+                return path
+        return None
+
     def _fetch_bedrock_download_url(self):
         """Get the latest Bedrock server download URL from Minecraft services API"""
         try:
@@ -13493,6 +13642,27 @@ def api_jar_bucket_progress(progress_id):
 def api_jar_bucket_list():
     """List all downloaded JAR files"""
     return api_success(jars=jar_bucket.list_downloaded_jars())
+
+@app.route('/api/jar-bucket/local-bedrock', methods=['GET'])
+@permission_required('servers.create')
+def api_jar_bucket_local_bedrock():
+    """Cached Bedrock archives the creation wizard can install without a download.
+
+    Guarded by servers.create rather than panel.jars.manage: it feeds the
+    Bedrock source picker in the server-creation wizard, whose users don't
+    necessarily manage the bucket itself.
+    """
+    builds = []
+    for path in jar_bucket.list_local_bedrock_zips():
+        if not jar_bucket.is_bedrock_zip(path):
+            continue
+        stat = path.stat()
+        builds.append({
+            'filename': path.name,
+            'size': stat.st_size,
+            'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+        })
+    return api_success(builds=builds)
 
 @app.route('/api/jar-bucket/delete', methods=['DELETE'])
 @permission_required('panel.jars.manage')

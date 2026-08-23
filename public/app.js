@@ -1799,8 +1799,9 @@ function resetUnifiedForm() {
   if (versionDesc) versionDesc.textContent = 'Select the Minecraft version';
 
   // Hide conditional sections
-  ['u-engine-group', 'u-version-group', 'u-ram-group', 'u-upload-jar-group',
-   'u-import-fields', 'u-world-file-group', 'u-download-status-group'].forEach(hideEl);
+  ['u-engine-group', 'u-version-group', 'u-bedrock-source-group', 'u-ram-group',
+   'u-upload-jar-group', 'u-import-fields', 'u-world-file-group',
+   'u-download-status-group'].forEach(hideEl);
 
   applyPropsEdition('unmodded');
   onUnifiedLevelTypeChange();
@@ -2028,6 +2029,7 @@ function onUnifiedCategoryChange() {
 
   uVersionAvailability = {};
   hideEl('u-download-status-group');
+  hideEl('u-bedrock-source-group');
 
   if (!category) {
     hideEl('u-engine-group');
@@ -2081,8 +2083,13 @@ function onUnifiedCategoryChange() {
   } else if (isBedrock) {
     hideEl('u-engine-group');
     hideEl('u-version-group');
-    if (categoryDesc) categoryDesc.textContent = 'Official Minecraft Bedrock Edition server — the latest version is downloaded automatically';
+    if (categoryDesc) categoryDesc.textContent = 'Official Minecraft Bedrock Edition server — install a cached build or download the latest';
     if (versionSelect) versionSelect.value = '';
+    // An import brings its own server binary inside the ZIP
+    if (!isImport) {
+      showEl('u-bedrock-source-group');
+      loadUnifiedBedrockBuilds();
+    }
   }
 
   // Sensible port/player defaults per edition, without clobbering user edits
@@ -2200,6 +2207,43 @@ async function loadUnifiedVersionsForEngine(serverEngine) {
     versionSelect.innerHTML = '<option value="">Error loading versions</option>';
   }
   validateUnifiedForm();
+}
+
+/**
+ * Fill the Bedrock build picker from the JAR bucket. A cached archive installs
+ * instantly and needs no internet, so the newest one is preselected; the live
+ * download stays available as the last option.
+ */
+async function loadUnifiedBedrockBuilds() {
+  const select = document.getElementById('u-bedrock-source');
+  if (!select) return;
+
+  const downloadOption = '<option value="download">Latest — download from Minecraft.net</option>';
+  let builds = [];
+  try {
+    const result = await apiRequest('/api/jar-bucket/local-bedrock');
+    builds = result.builds || [];
+  } catch (error) {
+    console.error('Failed to load cached Bedrock builds:', error);
+  }
+
+  select.innerHTML = builds.map(b => {
+    const when = b.modified ? new Date(b.modified).toLocaleDateString() : '';
+    const detail = [formatBytes(b.size), when].filter(Boolean).join(', ');
+    return `<option value="local:${escapeAttrValue(b.filename)}">${escapeHtml(b.filename)} ✓ (cached — ${escapeHtml(detail)})</option>`;
+  }).join('') + downloadOption;
+
+  select.value = builds.length ? `local:${builds[0].filename}` : 'download';
+  onUnifiedBedrockSourceChange();
+}
+
+function onUnifiedBedrockSourceChange() {
+  const value = (document.getElementById('u-bedrock-source') || {}).value || 'download';
+  const desc = document.getElementById('u-bedrock-source-desc');
+  if (!desc) return;
+  desc.textContent = value.startsWith('local:')
+    ? 'Installs from the JAR bucket — no download needed'
+    : 'The latest release is downloaded and kept in the JAR bucket';
 }
 
 function onUnifiedVersionChange() {
@@ -2785,8 +2829,17 @@ async function createFreshServer(e) {
           return;
         }
 
-        advanceToStep(2, 'Downloading latest Bedrock server...');
-        submitBtn.textContent = 'Downloading...';
+        // A cached build in the JAR bucket installs without touching the CDN
+        const buildChoice = (document.getElementById('u-bedrock-source') || {}).value || 'download';
+        const cachedBuild = buildChoice.startsWith('local:') ? buildChoice.slice('local:'.length) : '';
+
+        if (cachedBuild) {
+          advanceToStep(2, `Installing cached Bedrock server (${cachedBuild})`);
+          submitBtn.textContent = 'Installing...';
+        } else {
+          advanceToStep(2, 'Downloading latest Bedrock server...');
+          submitBtn.textContent = 'Downloading...';
+        }
 
         let setupResult;
         try {
@@ -2794,16 +2847,18 @@ async function createFreshServer(e) {
             method: 'POST',
             body: JSON.stringify({
               serverName: name,
-              serverProperties
+              serverProperties,
+              source: cachedBuild ? 'local' : 'download',
+              localFile: cachedBuild
             })
           });
         } catch (setupErr) {
-          failAtCurrentStep(`Failed to start Bedrock download: ${setupErr.message}`);
+          failAtCurrentStep(`Failed to start Bedrock setup: ${setupErr.message}`);
           return;
         }
 
         if (!setupResult.progressId) {
-          failAtCurrentStep('Failed to start Bedrock download — no progress ID returned');
+          failAtCurrentStep('Failed to start Bedrock setup — no progress ID returned');
           return;
         }
 

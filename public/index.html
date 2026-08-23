@@ -903,6 +903,17 @@
                     <small class="field-hint type-desc" id="u-version-desc">Select the Minecraft version</small>
                   </div>
 
+                  <div class="form-field" id="u-bedrock-source-group" style="display: none;">
+                    <label for="u-bedrock-source">
+                      Bedrock Build
+                      <button type="button" class="help-icon" data-tip="Install from an archive already in the JAR bucket (serverexecutables/bedrock) — instant, and works with no internet — or download the latest release from Minecraft.net." aria-label="More information">?</button>
+                    </label>
+                    <select id="u-bedrock-source" class="form-control" onchange="onUnifiedBedrockSourceChange()">
+                      <option value="download">Latest — download from Minecraft.net</option>
+                    </select>
+                    <small class="field-hint type-desc" id="u-bedrock-source-desc">The latest release is downloaded and kept in the JAR bucket</small>
+                  </div>
+
                   <!-- Import Existing Server fields -->
                   <div id="u-import-fields" style="display: none;">
                     <div class="form-field">
