@@ -387,8 +387,9 @@ async function changePassword() {
     return;
   }
   
-  if (newPassword.length < 6) {
-    showNotification('New password must be at least 6 characters', 'error');
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) {
+    showNotification(passwordError, 'error');
     return;
   }
   
@@ -2383,8 +2384,9 @@ async function saveEditUser() {
     
     // Update password if provided
     if (newPassword) {
-      if (newPassword.length < 6) {
-        showNotification('Password must be at least 6 characters', 'error');
+      const passwordError = validatePassword(newPassword);
+      if (passwordError) {
+        showNotification(passwordError, 'error');
         return;
       }
       
@@ -2460,6 +2462,12 @@ async function createUser(event) {
 
   if (!username || !password) {
     alert('Please fill in all fields');
+    return;
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    alert(passwordError);
     return;
   }
 

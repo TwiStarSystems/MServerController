@@ -123,6 +123,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             showError('Username can only contain letters, numbers, underscores, and hyphens');
             return;
         }
+
+        // Validate password against the server's policy
+        const passwordError = validatePassword(password);
+        if (passwordError) {
+            showError(passwordError);
+            return;
+        }
         
         submitBtn.disabled = true;
         submitBtn.textContent = 'Creating account...';

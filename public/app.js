@@ -454,8 +454,9 @@ async function changePassword() {
     return;
   }
   
-  if (newPassword.length < 6) {
-    showNotification('New password must be at least 6 characters', 'error');
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) {
+    showNotification(passwordError, 'error');
     return;
   }
   

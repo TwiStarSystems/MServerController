@@ -44,6 +44,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      showError(passwordError + '.');
+      return;
+    }
+
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
     const originalText = btn.textContent;

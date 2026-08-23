@@ -169,6 +169,36 @@ function showNotification(message, type = 'info') {
 }
 
 /**
+ * Password policy — must stay in sync with the server (UserManager.register /
+ * create_user / change_password / reset_password and the admin reset route in
+ * server.py, which all enforce the same rule). The client check is only a
+ * courtesy so the user is told what is wrong before the round trip; the server
+ * is the authority.
+ */
+const PASSWORD_MIN_LENGTH = 12;
+
+/**
+ * Validate a new password against the server's password policy.
+ * @param {string} password - The candidate password
+ * @returns {string|null} An error message, or null when the password is valid
+ */
+function validatePassword(password) {
+  if (!password || password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must contain at least one number';
+  }
+  return null;
+}
+
+/**
  * Modal stack management.
  *
  * Every `.modal` in the app shares the same CSS z-index, so which modal
