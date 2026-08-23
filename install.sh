@@ -459,6 +459,55 @@ start_services() {
     fi
 }
 
+# Stop the service and wait for it to actually be gone.
+#
+# `systemctl stop` returns once the stop job finishes, but a unit that overruns
+# its timeout is SIGKILLed and the state can lag; anything that copies msc.db
+# must not run while a process still holds the SQLite connection. Bounded wait —
+# a non-zero return means the caller should abort rather than touch the DB.
+stop_service_wait() {
+    local timeout="${1:-60}" waited=0
+
+    systemctl stop mserver 2>/dev/null || true
+
+    while systemctl is-active --quiet mserver 2>/dev/null; do
+        if [ "$waited" -ge "$timeout" ]; then
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    # The unit reads inactive as soon as the main process exits; give any
+    # lingering worker thread a moment to close its connection and check the
+    # WAL back in.
+    sleep 2
+    return 0
+}
+
+# Fold the write-ahead log back into msc.db.
+#
+# db.py runs SQLite in WAL mode, so a database left behind by an unclean
+# shutdown is up to three files (msc.db, msc.db-wal, msc.db-shm) and copying
+# msc.db on its own would drop every transaction still sitting in the WAL.
+# Best effort: if this cannot run, the -wal/-shm sidecars are preserved
+# alongside msc.db instead, which keeps the set consistent either way.
+checkpoint_database() {
+    local db="$1" py
+    [ -f "$db" ] || return 0
+
+    for py in "$INSTALL_DIR/venv/bin/python" python3; do
+        command -v "$py" >/dev/null 2>&1 || continue
+        if "$py" -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1], timeout=15); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.close()' "$db" 2>/dev/null; then
+            print_success "  Checkpointed write-ahead log into $(basename "$db")"
+            return 0
+        fi
+    done
+
+    print_warning "  Could not checkpoint the write-ahead log — preserving the -wal/-shm sidecars as-is"
+    return 0
+}
+
 # Restart services (for updates)
 restart_services() {
     print_info "Restarting services..."
@@ -652,6 +701,7 @@ do_update() {
     # Display what will be preserved
     print_info "Files and data to be PRESERVED during update:"
     echo "  • msc.db (SQLite database — users, servers, schedules, tasks, stats, API keys)"
+    echo "  • msc.db-wal / msc.db-shm (write-ahead log, if the database left any behind)"
     echo "  • settings.json (app settings)"
     echo "  • servers/* (all game server data)"
     echo "  • backups/* (all backups)"
@@ -665,14 +715,34 @@ do_update() {
         exit 0
     fi
     
-    # Stop the service
+    # Stop the service. This has to be deterministic: everything below copies
+    # the database out from under it, so a service that will not stop is a
+    # reason to abort, not to proceed on a timer.
     print_info "Stopping MServer service..."
-    systemctl stop mserver 2>/dev/null || true
-    sleep 2
-    
-    # List of critical files to preserve
+    if ! stop_service_wait 60; then
+        print_error "MServer is still running after 60s (state: $(systemctl is-active mserver 2>/dev/null || true))."
+        print_error "Aborting the update — copying msc.db while the service holds it risks losing data."
+        print_error "Stop it manually, then re-run the update:"
+        print_error "  sudo systemctl stop mserver && sudo $0 update"
+        exit 1
+    fi
+    print_success "Service stopped"
+
+    # Check the WAL back into msc.db now that nothing is connected, so the copy
+    # stashed below is complete even if the previous shutdown was unclean.
+    print_info "Checkpointing database..."
+    checkpoint_database "$INSTALL_DIR/msc.db"
+
+    # List of critical files to preserve. The -wal/-shm sidecars are normally
+    # gone by now (SQLite removes them on last-connection close, and the
+    # checkpoint above truncates anything left over), but they are listed so a
+    # database that still has them travels as one consistent set — a restored
+    # msc.db paired with a stale -wal is silent data loss. Missing files are
+    # skipped by both loops below.
     local preserve_files=(
         "msc.db"
+        "msc.db-wal"
+        "msc.db-shm"
         "settings.json"
         ".env"
     )
