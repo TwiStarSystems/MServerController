@@ -1266,7 +1266,7 @@ function showMissingFieldsModal(missingFields, currentData) {
         inputHtml = `<input type="text" id="missing-${field}" class="form-control" placeholder="Username" value="${currentUser?.username || 'admin'}" required>`;
         break;
       case 'ServerName':
-        inputHtml = `<input type="text" id="missing-${field}" class="form-control" placeholder="Server name" value="${escapeHtml(server?.name || '')}" required>`;
+        inputHtml = `<input type="text" id="missing-${field}" class="form-control" placeholder="Server name" value="${escapeAttrValue(server?.name || '')}" required>`;
         break;
       default:
         inputHtml = `<input type="text" id="missing-${field}" class="form-control" placeholder="Enter value..." required>`;
@@ -4680,11 +4680,11 @@ async function loadBackups() {
         <td>${new Date(backup.created).toLocaleString()}</td>
         <td>
           <div class="file-actions-cell">
-            <button class="btn btn-small action-btn" onclick="downloadBackup('${escapeHtml(backup.name)}')">Download</button>
-            <button class="btn btn-success btn-small action-btn" onclick="restoreBackup('${escapeHtml(backup.name)}')">Restore</button>
-            <button class="btn btn-small action-btn" onclick="verifyBackup('${escapeHtml(backup.name)}')">Verify</button>
-            <button class="btn btn-small action-btn" onclick="openRenameBackupModal('${escapeHtml(backup.name)}')">Rename</button>
-            <button class="btn btn-danger btn-small action-btn" onclick="deleteBackup('${escapeHtml(backup.name)}')">Delete</button>
+            <button class="btn btn-small action-btn" onclick="downloadBackup('${escapeAttr(backup.name)}')">Download</button>
+            <button class="btn btn-success btn-small action-btn" onclick="restoreBackup('${escapeAttr(backup.name)}')">Restore</button>
+            <button class="btn btn-small action-btn" onclick="verifyBackup('${escapeAttr(backup.name)}')">Verify</button>
+            <button class="btn btn-small action-btn" onclick="openRenameBackupModal('${escapeAttr(backup.name)}')">Rename</button>
+            <button class="btn btn-danger btn-small action-btn" onclick="deleteBackup('${escapeAttr(backup.name)}')">Delete</button>
           </div>
         </td>
       `;
@@ -4921,14 +4921,14 @@ async function loadBackupHistory() {
       const time = new Date(evt.timestamp).toLocaleString();
       const typeLabel = typeLabels[evt.type] || escapeHtml(evt.type || '');
       const fileName = evt.backupName
-        ? `<span title="${escapeHtml(evt.backupName)}">${escapeHtml(evt.backupName.substring(0, 36))}${evt.backupName.length > 36 ? '…' : ''}</span>`
+        ? `<span title="${escapeAttrValue(evt.backupName)}">${escapeHtml(evt.backupName.substring(0, 36))}${evt.backupName.length > 36 ? '…' : ''}</span>`
         : '—';
       const size = evt.size ? formatBytes(evt.size) : '—';
       const status = evt.success
         ? `<span class="badge badge-success">✅ OK</span>`
-        : `<span class="badge badge-danger" title="${escapeHtml(evt.error || '')}">❌ Failed</span>`;
+        : `<span class="badge badge-danger" title="${escapeAttrValue(evt.error || '')}">❌ Failed</span>`;
       const checksum = evt.checksum
-        ? `<span class="badge badge-secondary" title="${escapeHtml(evt.checksum)}">${evt.checksum.substring(0, 8)}…</span>`
+        ? `<span class="badge badge-secondary" title="${escapeAttrValue(evt.checksum)}">${evt.checksum.substring(0, 8)}…</span>`
         : '—';
       row.innerHTML = `<td>${time}</td><td>${typeLabel}</td><td>${fileName}</td><td>${size}</td><td>${status}</td><td>${checksum}</td>`;
       tbody.appendChild(row);
@@ -5720,7 +5720,7 @@ async function doModrinthSearch(pageOffset = 0) {
       card.className = 'modrinth-card';
 
       const iconHtml = hit.iconUrl
-        ? `<img class="modrinth-icon" src="${escapeHtml(hit.iconUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+        ? `<img class="modrinth-icon" src="${escapeAttrValue(hit.iconUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="modrinth-icon-placeholder">📦</div>`;
 
       const dlFormatted = hit.downloads >= 1_000_000
@@ -5739,7 +5739,7 @@ async function doModrinthSearch(pageOffset = 0) {
             ${hit.categories.slice(0, 3).map(c => `<span class="badge badge-secondary">${escapeHtml(c)}</span>`).join('')}
           </div>
           <button class="btn btn-success btn-small modrinth-install-btn"
-                  onclick="openModrinthVersionModal('${escapeHtml(hit.projectId)}', '${escapeHtml(hit.title)}')">
+                  onclick="openModrinthVersionModal('${escapeAttr(hit.projectId)}', '${escapeAttr(hit.title)}')">
             Install
           </button>
         </div>
@@ -6085,8 +6085,8 @@ async function loadOperators() {
         </td>
         <td>${op.bypassesPlayerLimit ? '✅' : '❌'}</td>
         <td class="actions-cell">
-          <button class="btn btn-small" onclick="editOperator('${op.uuid}', '${escapeHtml(op.name)}', ${op.level}, ${op.bypassesPlayerLimit})">Edit</button>
-          <button class="btn btn-danger btn-small" onclick="removeOperator('${op.uuid}', '${escapeHtml(op.name)}')">Remove</button>
+          <button class="btn btn-small" onclick="editOperator('${op.uuid}', '${escapeAttr(op.name)}', ${op.level}, ${op.bypassesPlayerLimit})">Edit</button>
+          <button class="btn btn-danger btn-small" onclick="removeOperator('${op.uuid}', '${escapeAttr(op.name)}')">Remove</button>
         </td>
       </tr>
     `).join('');
@@ -6137,7 +6137,7 @@ async function loadPlayerData() {
     _allPlayerRows = players.map(player => {
       const op = ops.find(o => o.uuid === player.uuid);
       const opButton = op 
-        ? `<button class="btn btn-small btn-danger" onclick="removeOperator('${player.uuid}', '${escapeHtml(op.name)}')">Remove OP</button>`
+        ? `<button class="btn btn-small btn-danger" onclick="removeOperator('${player.uuid}', '${escapeAttr(op.name)}')">Remove OP</button>`
         : `<button class="btn btn-small btn-success" onclick="makePlayerOp('${player.uuid}')">Make OP</button>`;
 
       const wlButton = whitelistUuids.has(player.uuid)
@@ -6154,7 +6154,7 @@ async function loadPlayerData() {
           <td>${new Date(player.modified).toLocaleString()}</td>
           <td>${formatBytes(player.size)}</td>
           <td class="actions-cell">
-            <button class="btn btn-small" onclick="openPlayerNbtEditor('${player.uuid}', '${escapeHtml(player.path || '')}')">Edit NBT</button>
+            <button class="btn btn-small" onclick="openPlayerNbtEditor('${player.uuid}', '${escapeAttr(player.path || '')}')">Edit NBT</button>
             <button class="btn btn-small" onclick="viewPlayerStats('${player.uuid}')">📊 Stats</button>
             <button class="btn btn-small" onclick="viewPlayerInventory('${player.uuid}')">🎒 Inventory</button>
             ${opButton}
@@ -6228,7 +6228,7 @@ async function loadWhitelist() {
         <td><strong>${escapeHtml(player.name)}</strong></td>
         <td class="uuid-cell">${escapeHtml(player.uuid)}</td>
         <td class="actions-cell">
-          <button class="btn btn-danger btn-small" onclick="removeFromWhitelist('${player.uuid}', '${escapeHtml(player.name)}')">Remove</button>
+          <button class="btn btn-danger btn-small" onclick="removeFromWhitelist('${player.uuid}', '${escapeAttr(player.name)}')">Remove</button>
         </td>
       </tr>
     `).join('');
@@ -6796,7 +6796,7 @@ async function loadBannedIPs() {
           <td>${expiresDisplay}</td>
           <td>${escapeHtml(entry.source || 'Unknown')}</td>
           <td class="actions-cell">
-            <button class="btn btn-success btn-small" onclick="unbanIp('${escapeHtml(entry.ip)}')">Unban</button>
+            <button class="btn btn-success btn-small" onclick="unbanIp('${escapeAttr(entry.ip)}')">Unban</button>
           </td>
         </tr>
       `;
@@ -7031,7 +7031,7 @@ function renderScheduledMessages(messages) {
       <td>${escapeHtml(m.name)}</td>
       <td>${escapeHtml(triggerLabel)}${cronInfo}</td>
       <td>${escapeHtml(typeLabel)}</td>
-      <td title="${escapeHtml(m.message)}">${msgPreview}</td>
+      <td title="${escapeAttrValue(m.message)}">${msgPreview}</td>
       <td>${m.runCount}</td>
       <td class="actions-cell">
         <button class="btn btn-small" onclick="testScheduledMessage('${m.id}')">Test</button>

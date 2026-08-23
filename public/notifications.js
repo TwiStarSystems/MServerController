@@ -69,11 +69,11 @@ function _renderNotifList(notifications) {
     const timeAgo = _timeAgo(n.created);
     const approvalBtns = (n.type === 'approval_request' && n.refType === 'pending_action' && n.refId)
       ? `<div class="notif-actions">
-           <button class="btn btn-small btn-success" onclick="approveFromNotif('${escapeHtml(n.refId)}', '${escapeHtml(n.id)}')">Approve</button>
-           <button class="btn btn-small btn-danger" onclick="rejectFromNotif('${escapeHtml(n.refId)}', '${escapeHtml(n.id)}')">Reject</button>
+           <button class="btn btn-small btn-success" onclick="approveFromNotif('${escapeAttr(n.refId)}', '${escapeAttr(n.id)}')">Approve</button>
+           <button class="btn btn-small btn-danger" onclick="rejectFromNotif('${escapeAttr(n.refId)}', '${escapeAttr(n.id)}')">Reject</button>
          </div>` : '';
 
-    return `<div class="notif-item ${readClass}" data-id="${escapeHtml(n.id)}">
+    return `<div class="notif-item ${readClass}" data-id="${escapeAttrValue(n.id)}">
       <div class="notif-item-header">
         <span class="notif-icon">${typeIcon}</span>
         <span class="notif-title">${escapeHtml(n.title)}</span>
@@ -82,8 +82,8 @@ function _renderNotifList(notifications) {
       ${n.message ? `<div class="notif-message">${escapeHtml(n.message)}</div>` : ''}
       ${approvalBtns}
       <div class="notif-item-controls">
-        ${!n.read ? `<button class="btn-link" onclick="markNotifRead('${escapeHtml(n.id)}')">Mark read</button>` : ''}
-        <button class="btn-link" onclick="dismissNotif('${escapeHtml(n.id)}')">Dismiss</button>
+        ${!n.read ? `<button class="btn-link" onclick="markNotifRead('${escapeAttr(n.id)}')">Mark read</button>` : ''}
+        <button class="btn-link" onclick="dismissNotif('${escapeAttr(n.id)}')">Dismiss</button>
       </div>
     </div>`;
   }).join('');

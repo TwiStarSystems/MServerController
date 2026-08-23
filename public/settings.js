@@ -1493,9 +1493,9 @@ function renderVersions(versions) {
       <div class="version-item ${isDownloaded ? 'downloaded' : ''}">
         <div class="version-info">
           <span class="version-number">${escapeHtml(version)}</span>
-          ${isDownloaded ? `<span class="downloaded-badge" title="${escapeHtml(downloadedFile?.filename || '')}">✓ Downloaded</span>` : ''}
+          ${isDownloaded ? `<span class="downloaded-badge" title="${escapeAttrValue(downloadedFile?.filename || '')}">✓ Downloaded</span>` : ''}
         </div>
-        <button class="btn btn-small ${isDownloaded ? 'btn-secondary' : 'btn-success'}" onclick="downloadJarVersion('${selectedServerType}', '${escapeHtml(version)}')">
+        <button class="btn btn-small ${isDownloaded ? 'btn-secondary' : 'btn-success'}" onclick="downloadJarVersion('${selectedServerType}', '${escapeAttr(version)}')">
           ${isDownloaded ? '🔄 Re-download' : '📥 Download'}
         </button>
       </div>
@@ -1733,7 +1733,7 @@ async function loadJarBucketDownloaded() {
               <span class="jar-size">${formatBytes(file.size)}</span>
             </div>
             <div class="jar-file-actions">
-              <button class="btn btn-small btn-danger" onclick="deleteJarBucket('${serverType}', '${escapeHtml(file.filename)}')" title="Delete">🗑️</button>
+              <button class="btn btn-small btn-danger" onclick="deleteJarBucket('${serverType}', '${escapeAttr(file.filename)}')" title="Delete">🗑️</button>
             </div>
           </div>
         `;
@@ -2054,7 +2054,7 @@ async function loadUsers() {
                 <td>${u.email ? escapeHtml(u.email) : '<span class="text-muted">Not set</span>'}</td>
                 <td><span class="group-badge">${escapeHtml(u.groupName || 'None')}</span></td>
                 <td>${u.locked
-                  ? `<span class="badge badge-danger" title="${u.disabledAt ? 'Locked after too many failed logins on ' + escapeHtml(new Date(u.disabledAt).toLocaleString()) : 'Account disabled'}">🔒 Locked</span>`
+                  ? `<span class="badge badge-danger" title="${u.disabledAt ? 'Locked after too many failed logins on ' + escapeAttrValue(new Date(u.disabledAt).toLocaleString()) : 'Account disabled'}">🔒 Locked</span>`
                   : '<span class="badge badge-success">Active</span>'}</td>
                 <td>${u.mfaEnabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-secondary">Disabled</span>'}</td>
                 <td>${new Date(u.created).toLocaleDateString()}</td>
@@ -2062,9 +2062,9 @@ async function loadUsers() {
                 <td class="user-mgmt-actions">
                   ${u.isAntiLockout
                     ? '<span class="text-muted" title="Built-in emergency admin. Managed by the system and cannot be edited or deleted.">🔒 System account</span>'
-                    : `${u.locked ? `<button class="btn btn-small btn-success" onclick="unlockUser('${u.id}', '${escapeHtml(u.username)}')">🔓 Unlock</button>` : ''}
+                    : `${u.locked ? `<button class="btn btn-small btn-success" onclick="unlockUser('${u.id}', '${escapeAttr(u.username)}')">🔓 Unlock</button>` : ''}
                   <button class="btn btn-small btn-primary" onclick="openEditUserModal('${u.id}')">✏️ Edit</button>
-                  <button class="btn btn-small btn-danger" onclick="deleteUser('${u.id}', '${escapeHtml(u.username)}')">🗑️</button>`}
+                  <button class="btn btn-small btn-danger" onclick="deleteUser('${u.id}', '${escapeAttr(u.username)}')">🗑️</button>`}
                 </td>
               </tr>
             `).join('')}
@@ -2119,7 +2119,7 @@ async function loadPendingUsers() {
               </div>
               <div class="approval-item-actions">
                 <button class="btn btn-small btn-success" onclick="approveUser('${u.id}')">Approve</button>
-                <button class="btn btn-small btn-danger" onclick="deleteUser('${u.id}', '${escapeHtml(u.username)}')">Reject</button>
+                <button class="btn btn-small btn-danger" onclick="deleteUser('${u.id}', '${escapeAttr(u.username)}')">Reject</button>
               </div>
             </div>
           `).join('')}
@@ -2175,7 +2175,7 @@ async function loadPendingServers() {
               </div>
               <div class="approval-item-actions">
                 <button class="btn btn-small btn-success" onclick="approveServer('${s.id}')">Approve</button>
-                <button class="btn btn-small btn-danger" onclick="rejectServer('${s.id}', '${escapeHtml(s.name)}')">Reject</button>
+                <button class="btn btn-small btn-danger" onclick="rejectServer('${s.id}', '${escapeAttr(s.name)}')">Reject</button>
               </div>
             </div>
           `).join('')}
@@ -2844,11 +2844,11 @@ function displayApiKeys(keys) {
             <span class="api-key-status ${statusClass}">${statusText}</span>
           </div>
           <div class="api-key-actions">
-            <button class="btn btn-small" onclick="copyApiKey('${escapeHtml(key.id)}')" title="Copy Key">📋</button>
-            <button class="btn btn-small ${key.active ? 'btn-warning' : 'btn-success'}" onclick="toggleApiKey('${escapeHtml(key.id)}')" title="${key.active ? 'Disable' : 'Enable'}">
+            <button class="btn btn-small" onclick="copyApiKey('${escapeAttr(key.id)}')" title="Copy Key">📋</button>
+            <button class="btn btn-small ${key.active ? 'btn-warning' : 'btn-success'}" onclick="toggleApiKey('${escapeAttr(key.id)}')" title="${key.active ? 'Disable' : 'Enable'}">
               ${key.active ? '⏸️' : '▶️'}
             </button>
-            <button class="btn btn-small btn-danger" onclick="deleteApiKey('${escapeHtml(key.id)}')" title="Delete">🗑️</button>
+            <button class="btn btn-small btn-danger" onclick="deleteApiKey('${escapeAttr(key.id)}')" title="Delete">🗑️</button>
           </div>
         </div>
         
@@ -3280,7 +3280,7 @@ function renderEmailTemplates() {
           <div class="form-group">
             <label for="tmpl-subject-${key}">Subject</label>
             <input type="text" id="tmpl-subject-${key}" class="form-control"
-                   value="${escapeHtml(tmpl.subject || '')}" placeholder="Subject template…">
+                   value="${escapeAttrValue(tmpl.subject || '')}" placeholder="Subject template…">
           </div>
           <div class="form-group">
             <label for="tmpl-html-${key}">HTML Body</label>
@@ -3528,7 +3528,7 @@ async function populateGroupSelect(selectId, selectedId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   sel.innerHTML = _groupsCache.map(g =>
-    `<option value="${escapeHtml(g.id)}" ${g.id === selectedId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`
+    `<option value="${escapeAttrValue(g.id)}" ${g.id === selectedId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`
   ).join('');
 }
 
@@ -3564,9 +3564,9 @@ function renderGroups(groups, container) {
         <span class="text-muted" style="margin-left:auto">${permCount} permissions | ${g.userCount || 0} users</span>
       </div>
       <div class="group-card-actions">
-        <button class="btn btn-small btn-primary" onclick="openEditGroupModal('${escapeHtml(g.id)}')">Edit</button>
-        ${!g.isBuiltin ? `<button class="btn btn-small btn-danger" onclick="deleteGroup('${escapeHtml(g.id)}', '${escapeHtml(g.name)}')">Delete</button>` : ''}
-        ${!g.isDefault ? `<button class="btn btn-small" onclick="setDefaultGroup('${escapeHtml(g.id)}')">Set Default</button>` : ''}
+        <button class="btn btn-small btn-primary" onclick="openEditGroupModal('${escapeAttr(g.id)}')">Edit</button>
+        ${!g.isBuiltin ? `<button class="btn btn-small btn-danger" onclick="deleteGroup('${escapeAttr(g.id)}', '${escapeAttr(g.name)}')">Delete</button>` : ''}
+        ${!g.isDefault ? `<button class="btn btn-small" onclick="setDefaultGroup('${escapeAttr(g.id)}')">Set Default</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -3592,15 +3592,15 @@ function renderPermissionCheckboxes(containerId, selectedPerms) {
     html += `<div class="perm-category">
       <div class="perm-category-header">
         <strong>${escapeHtml(category)}</strong>
-        <button type="button" class="btn btn-small" onclick="toggleAllPerms('${containerId}', '${escapeHtml(category)}', true)">Select All</button>
-        <button type="button" class="btn btn-small" onclick="toggleAllPerms('${containerId}', '${escapeHtml(category)}', false)">Deselect All</button>
+        <button type="button" class="btn btn-small" onclick="toggleAllPerms('${containerId}', '${escapeAttr(category)}', true)">Select All</button>
+        <button type="button" class="btn btn-small" onclick="toggleAllPerms('${containerId}', '${escapeAttr(category)}', false)">Deselect All</button>
       </div>
       <div class="perm-grid">`;
     for (const p of perms) {
       const label = catalog.labels[p] || p;
       const checked = isAll || selectedPerms.includes(p) ? 'checked' : '';
-      html += `<label class="perm-checkbox" data-category="${escapeHtml(category)}">
-        <input type="checkbox" name="perm" value="${escapeHtml(p)}" ${checked}> ${escapeHtml(label)}
+      html += `<label class="perm-checkbox" data-category="${escapeAttrValue(category)}">
+        <input type="checkbox" name="perm" value="${escapeAttrValue(p)}" ${checked}> ${escapeHtml(label)}
       </label>`;
     }
     html += '</div></div>';
