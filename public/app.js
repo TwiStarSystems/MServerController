@@ -299,7 +299,7 @@ async function loadBranding() {
           document.head.appendChild(favicon);
         }
         // siteIcon is now a filename stored on the server
-        favicon.href = `/public/favicons/${branding.siteIcon}`;
+        favicon.href = `/favicons/${branding.siteIcon}`;
       }
       
       // Update footer

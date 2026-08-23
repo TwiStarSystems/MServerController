@@ -236,7 +236,7 @@ async function loadPageBranding() {
           document.head.appendChild(favicon);
         }
         // siteIcon is now a filename stored on the server
-        favicon.href = `/public/favicons/${branding.siteIcon}`;
+        favicon.href = `/favicons/${branding.siteIcon}`;
       }
     }
   } catch (err) {
@@ -753,7 +753,7 @@ async function loadBranding() {
         document.getElementById('favicon-filename').textContent = branding.siteIcon;
         const previewContainer = document.getElementById('favicon-preview');
         previewContainer.style.display = 'block';
-        document.getElementById('favicon-preview-img').src = `/public/favicons/${branding.siteIcon}`;
+        document.getElementById('favicon-preview-img').src = `/favicons/${branding.siteIcon}`;
       }
       
       updateBrandingPreview();
