@@ -2526,6 +2526,14 @@ class UserManager:
     # after disabled_at; a disabled account with no disabled_at stays locked.
     LOCKOUT_DURATION_SECONDS = 1800
 
+    # Password policy. _validate_password() is the single enforcement point — every
+    # path that sets a password goes through it (register, create_user,
+    # create_first_admin, change_password, reset_password, and the admin
+    # reset-password route). Mirrored client-side by validatePassword() in
+    # public/utils.js; that copy is a courtesy so the user is told before the round
+    # trip, this one is the authority. Keep the two minimums in step.
+    PASSWORD_MIN_LENGTH = 12
+
     _DEFAULT_NOTIF_PREFS = {
         'backupComplete': False,
         'backupFailure': False,
@@ -2540,6 +2548,39 @@ class UserManager:
         self._ensure_anti_lockout_admin_exists()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _validate_username(self, username):
+        """Check a username against the account-name rules.
+
+        Returns an error message, or None when the username is acceptable.
+        """
+        if len(username) < 3 or len(username) > 32:
+            return "Username must be 3-32 characters"
+        if not username.replace('_', '').replace('-', '').isalnum():
+            return "Username can only contain letters, numbers, underscores, and hyphens"
+        if username.lower() == self.ANTI_LOCKOUT_USERNAME:
+            return "That username is reserved"
+        return None
+
+    @classmethod
+    def _validate_password(cls, password, label="Password"):
+        """Check a password against PASSWORD_MIN_LENGTH + complexity.
+
+        Returns an error message, or None when the password is acceptable. Every
+        path that sets a password goes through here so the policy cannot drift
+        between them (it did: create_user once accepted 6 characters with no
+        complexity while the other three required 12 — see issue #91).
+        """
+        password = password or ''
+        if len(password) < cls.PASSWORD_MIN_LENGTH:
+            return f"{label} must be at least {cls.PASSWORD_MIN_LENGTH} characters"
+        if not any(c.isupper() for c in password):
+            return "Password must contain at least one uppercase letter"
+        if not any(c.islower() for c in password):
+            return "Password must contain at least one lowercase letter"
+        if not any(c.isdigit() for c in password):
+            return "Password must contain at least one number"
+        return None
 
     @staticmethod
     def _row_to_dict(row):
@@ -2715,20 +2756,9 @@ class UserManager:
 
     def register(self, username, password):
         """Register a new user (pending approval)."""
-        if len(username) < 3 or len(username) > 32:
-            return None, "Username must be 3-32 characters"
-        if not username.replace('_', '').replace('-', '').isalnum():
-            return None, "Username can only contain letters, numbers, underscores, and hyphens"
-        if username.lower() == self.ANTI_LOCKOUT_USERNAME:
-            return None, "That username is reserved"
-        if len(password) < 12:
-            return None, "Password must be at least 12 characters"
-        if not any(c.isupper() for c in password):
-            return None, "Password must contain at least one uppercase letter"
-        if not any(c.islower() for c in password):
-            return None, "Password must contain at least one lowercase letter"
-        if not any(c.isdigit() for c in password):
-            return None, "Password must contain at least one number"
+        error = self._validate_username(username) or self._validate_password(password)
+        if error:
+            return None, error
 
         reg_policy = settings_manager.get_policy('registration')
         require_approval = reg_policy == 'require_approval'
@@ -2771,14 +2801,9 @@ class UserManager:
 
     def create_user(self, username, password, group_id=None, email=''):
         """Create a user directly (admin function, auto-approved)."""
-        if len(username) < 3 or len(username) > 32:
-            return None, "Username must be 3-32 characters"
-        if not username.replace('_', '').replace('-', '').isalnum():
-            return None, "Username can only contain letters, numbers, underscores, and hyphens"
-        if username.lower() == self.ANTI_LOCKOUT_USERNAME:
-            return None, "That username is reserved"
-        if len(password) < 6:
-            return None, "Password must be at least 6 characters"
+        error = self._validate_username(username) or self._validate_password(password)
+        if error:
+            return None, error
         if group_id is None:
             group_id = group_manager.get_default_group_id()
         if not group_manager.get_group(group_id):
@@ -2815,20 +2840,9 @@ class UserManager:
         if not self.needs_setup():
             return None, "Setup has already been completed"
         username = (username or '').strip()
-        if username.lower() == self.ANTI_LOCKOUT_USERNAME:
-            return None, "That username is reserved"
-        if len(username) < 3 or len(username) > 32:
-            return None, "Username must be 3-32 characters"
-        if not username.replace('_', '').replace('-', '').isalnum():
-            return None, "Username can only contain letters, numbers, underscores, and hyphens"
-        if len(password) < 12:
-            return None, "Password must be at least 12 characters"
-        if not any(c.isupper() for c in password):
-            return None, "Password must contain at least one uppercase letter"
-        if not any(c.islower() for c in password):
-            return None, "Password must contain at least one lowercase letter"
-        if not any(c.isdigit() for c in password):
-            return None, "Password must contain at least one number"
+        error = self._validate_username(username) or self._validate_password(password)
+        if error:
+            return None, error
 
         user_id = str(uuid.uuid4())[:8]
         default_prefs = json.dumps({k: False for k in self._DEFAULT_NOTIF_PREFS})
@@ -3070,14 +3084,9 @@ admin account has been ENABLED:
             return False, "User not found"
         if not check_password_hash(row['password'], old_password):
             return False, "Current password is incorrect"
-        if len(new_password) < 12:
-            return False, "New password must be at least 12 characters"
-        if not any(c.isupper() for c in new_password):
-            return False, "Password must contain at least one uppercase letter"
-        if not any(c.islower() for c in new_password):
-            return False, "Password must contain at least one lowercase letter"
-        if not any(c.isdigit() for c in new_password):
-            return False, "Password must contain at least one number"
+        error = self._validate_password(new_password, label="New password")
+        if error:
+            return False, error
         conn = get_db()
         conn.execute('UPDATE users SET password=? WHERE id=?',
                      (generate_password_hash(new_password), user_id))
@@ -3087,10 +3096,7 @@ admin account has been ENABLED:
     def reset_password(self, user_id, new_password):
         """Admin reset user password (no old password required)."""
         if self._is_anti_lockout(user_id): return False
-        if len(new_password) < 12: return False
-        if not any(c.isupper() for c in new_password): return False
-        if not any(c.islower() for c in new_password): return False
-        if not any(c.isdigit() for c in new_password): return False
+        if self._validate_password(new_password): return False
         conn = get_db()
         result = conn.execute('UPDATE users SET password=? WHERE id=?',
                               (generate_password_hash(new_password), user_id))
@@ -6651,14 +6657,9 @@ def api_reset_user_password(user_id):
     data = request.get_json()
     new_password = data.get('password', '')
 
-    if len(new_password) < 12:
-        return api_error('Password must be at least 12 characters', 400)
-    if not any(c.isupper() for c in new_password):
-        return api_error('Password must contain at least one uppercase letter', 400)
-    if not any(c.islower() for c in new_password):
-        return api_error('Password must contain at least one lowercase letter', 400)
-    if not any(c.isdigit() for c in new_password):
-        return api_error('Password must contain at least one number', 400)
+    error = UserManager._validate_password(new_password)
+    if error:
+        return api_error(error, 400)
 
     if user_manager.reset_password(user_id, new_password):
         return api_success()
